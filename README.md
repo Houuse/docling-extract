@@ -7,6 +7,9 @@ on whatever machine has the hardware and the results shared afterwards.
 
 Nothing here needs a database or an embedding model.
 
+**Running the whole thing on a GPU box and sharing the result?**
+See [RUNBOOK.md](RUNBOOK.md) — copy-paste steps end to end.
+
 ## Install
 
 ```bash

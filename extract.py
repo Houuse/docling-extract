@@ -26,6 +26,15 @@ from pathlib import Path
 MODE_DEFAULT = "accurate"
 
 
+def _version(package: str) -> str:
+    import importlib.metadata as md
+
+    try:
+        return md.version(package)
+    except Exception:  # noqa: BLE001
+        return "unknown"
+
+
 def page_count(pdf: Path) -> int:
     import pypdfium2
 
@@ -173,6 +182,10 @@ def convert(
     pages_seen = sorted(merged.pages)
     meta = {
         "pdf": str(pdf),
+        # Recorded so a corpus can be checked for consistency later: documents
+        # extracted by different model versions must not be mixed.
+        "docling": _version("docling"),
+        "docling_core": _version("docling-core"),
         "mode": mode,
         "device": device,
         "ocr": ocr,
