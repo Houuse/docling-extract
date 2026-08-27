@@ -2,11 +2,13 @@
 # One-shot setup and run. Works in Git Bash on Windows, and on Linux/macOS.
 #
 #   ./setup.sh                      set up, verify, convert everything
+#   ./setup.sh --embed              set up, then embed what is already converted
 #   ./setup.sh --setup-only         set up and verify, convert nothing
 #   ./setup.sh --pdfs ../fb/pdfs    where the PDFs are
 #   ./setup.sh --cpu                force CPU
 #   ./setup.sh --gpu                require a GPU, fail if unusable
 #   ./setup.sh --limit 3            convert only 3 documents (a real test)
+#   ./setup.sh --embed --batch 128  bigger embedding batches if VRAM allows
 #
 # Every step that can fail silently is verified before the next one runs.
 
@@ -20,6 +22,8 @@ WORKERS=1
 LIMIT=""
 SETUP_ONLY=0
 FORCED_GPU=0
+EMBED=0
+BATCH=64              # encode batch size; 8 suits a CPU, a GPU wants far more
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -30,6 +34,8 @@ while [ $# -gt 0 ]; do
     --limit)       LIMIT="$2"; shift 2 ;;
     --cpu)         DEVICE="cpu"; shift ;;
     --gpu)         DEVICE="cuda"; FORCED_GPU=1; shift ;;
+    --embed)       EMBED=1; shift ;;
+    --batch)       BATCH="$2"; shift 2 ;;
     --setup-only)  SETUP_ONLY=1; shift ;;
     -h|--help)     sed -n '2,11p' "$0"; exit 0 ;;
     *)             echo "unknown option: $1" >&2; exit 2 ;;
@@ -87,9 +93,13 @@ ACTUAL="$("$PY" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
 [ "$ACTUAL" = "$PYVER" ] || die "venv is on Python $ACTUAL, wanted $PYVER"
 
 # ------------------------------------------------------------ 3. docling
-say "3/6  docling"
-uv pip install --python "$PY" --quiet -r requirements.txt
+say "3/6  dependencies"
+# pyproject.toml is the single pinned list. The `convert` extra adds docling
+# itself, which chunking and embedding do not need — they work from JSON, which
+# is what lets conversion and embedding happen on different machines.
+uv pip install --python "$PY" --quiet -e ".[convert]"
 "$PY" -c 'import docling, importlib.metadata as m; print("docling", m.version("docling"))'
+"$PY" -c 'import docling_extract, importlib.metadata as m; print("docling-extract", m.version("docling-extract"))'
 
 # --------------------------------------------------------------- 4. torch
 # Must come AFTER docling: resolving docling's own torch dependency replaces a
@@ -180,6 +190,24 @@ fi
 if [ "$SETUP_ONLY" = "1" ]; then
   say "setup complete"
   echo "convert with:  $PY batch.py \"$PDFS\" --out \"$OUT\" --device $DEVICE"
+  echo "embed with:    $PY embed.py --all --out \"$OUT\" --device $DEVICE --batch $BATCH"
+  exit 0
+fi
+
+if [ "$EMBED" = "1" ]; then
+  [ -d "$OUT" ] || die "no such directory: $OUT  (pass --out <dir>)"
+  DOCS="$(find "$OUT" -maxdepth 1 -name '*.json' ! -name '*.meta.json' | wc -l | tr -d ' ')"
+  [ "$DOCS" -gt 0 ] || die "no converted documents in $OUT — convert first"
+
+  say "6/6  embedding $DOCS documents from $OUT"
+  # Resumable: a document whose .npy already exists is skipped.
+  "$PY" embed.py --all --out "$OUT" --device "$DEVICE" --batch "$BATCH"
+
+  NPY="$(find "$OUT" -maxdepth 1 -name '*.emb.*.npy' | wc -l | tr -d ' ')"
+  say "done: $NPY .npy files in $OUT"
+  echo
+  echo "package just the embeddings (small next to the JSON):"
+  echo "  tar -czf embeddings.tar.gz -C \"$OUT\" \$(cd \"$OUT\" && ls *.emb.*.npy)"
   exit 0
 fi
 

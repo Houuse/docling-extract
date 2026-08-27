@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "docling-extract"
+version = "0.2.0"
+description = "Extract, chunk and embed PDF corpora with Docling"
+requires-python = ">=3.10,<3.13"   # torch CUDA wheels lag new Python releases
+dependencies = [
+    # Exact pins, not minimums. Chunk boundaries come out of docling_core's
+    # HybridChunker and the HuggingFace tokenizer, and the embedding cache is
+    # keyed by an md5 of the resulting strings. A different version of either
+    # produces different text, a different key, and a cache that silently
+    # misses — plus vectors incomparable with any already in a store.
+    "docling-core==2.92.0",
+    "transformers==5.15.1",
+    "tokenizers==0.22.2",
+    "sentence-transformers==6.0.0",
+    "numpy==2.5.2",
+    "einops==0.8.2",
+]
+
+# torch arrives as a dependency of sentence-transformers and is deliberately
+# unpinned: setup.sh checks whether the installed wheel can actually see the
+# GPU and only reinstalls from a CUDA index when it cannot. Forcing an index
+# here would downgrade working installs.
+
+[project.optional-dependencies]
+# Only needed to convert PDFs. Importing docling_extract.chunking does not
+# require it — that works from already-converted JSON, which is the point of
+# being able to convert on one machine and chunk on another.
+convert = ["docling==2.122.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["docling_extract"]
