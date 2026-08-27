@@ -66,7 +66,7 @@ def build_texts(out: Path, stem: str):
     return (meta, [c.text for c in chunks], fact_texts), None
 
 
-def install_encoder(device: str | None, batch: int) -> str:
+def install_encoder(device: str | None, batch: int, budget_chars: int) -> str:
     """Replace embedding._encode with one that loads the model once.
 
     The library builds a SentenceTransformer per call, which is right for one
@@ -99,12 +99,43 @@ def install_encoder(device: str | None, batch: int) -> str:
         # Sort by length so long chunks batch with long chunks; mixed batches
         # pad every short chunk up to the longest one.
         order = sorted(range(len(texts)), key=lambda i: len(texts[i]))
-        vecs_sorted = model.encode(
-            [emb.DOC_PREFIX + texts[i] for i in order],
-            batch_size=batch,
-            normalize_embeddings=True,
-            show_progress_bar=False,
-        )
+
+        # A fixed batch size is the wrong knob. Attention cost grows with
+        # batch x sequence^2, and this corpus spans four orders of magnitude:
+        # fact strings of ~30 tokens next to whole financial statements at the
+        # 8192-token cap. One size either wastes the GPU on the short strings
+        # or runs it out of memory on the long ones — and because the inputs
+        # are sorted, every longest chunk lands in the same batch.
+        #
+        # So cap each batch by its padded token count instead. Length here is
+        # characters, a cheap proxy: tokenizing twice to plan the batches
+        # would cost more than it saves.
+        groups: list[list[int]] = []
+        cur: list[int] = []
+        for i in order:
+            longest = max(len(texts[i]), len(texts[cur[0]]) if cur else 0)
+            if cur and (len(cur) + 1) * longest > budget_chars:
+                groups.append(cur)
+                cur = []
+            cur.append(i)
+            if len(cur) >= batch:
+                groups.append(cur)
+                cur = []
+        if cur:
+            groups.append(cur)
+
+        out = []
+        for g in groups:
+            out.append(
+                model.encode(
+                    [emb.DOC_PREFIX + texts[i] for i in g],
+                    batch_size=len(g),
+                    normalize_embeddings=True,
+                    show_progress_bar=False,
+                )
+            )
+        vecs_sorted = np.concatenate(out) if len(out) > 1 else out[0]
+
         vecs = np.empty_like(vecs_sorted)
         vecs[order] = vecs_sorted
         if vecs.shape[1] != emb.EMBED_DIM:
@@ -128,8 +159,18 @@ def main() -> None:
     ap.add_argument(
         "--batch",
         type=int,
-        default=64,
-        help="encode batch size; 8 suits a CPU, a GPU wants far more",
+        default=256,
+        help="maximum texts per batch; only binds on short texts like facts",
+    )
+    ap.add_argument(
+        "--max-batch-chars",
+        type=int,
+        default=40_000,
+        help=(
+            "padded characters per batch — the knob that actually governs VRAM. "
+            "Default suits about 10 GB dedicated; halve it if you still OOM, "
+            "raise it if the GPU looks idle."
+        ),
     )
     ap.add_argument("--device", help="cuda or cpu (default: cuda if available)")
     args = ap.parse_args()
@@ -149,8 +190,9 @@ def main() -> None:
     if not stems:
         sys.exit("nothing to do: pass stems or --all")
 
-    device = install_encoder(args.device, args.batch)
-    print(f"device {device}  batch {args.batch}  out {out}")
+    device = install_encoder(args.device, args.batch, args.max_batch_chars)
+    print(f"device {device}  batch <={args.batch}  "
+          f"max-batch-chars {args.max_batch_chars:,}  out {out}")
     print(f"{len(stems)} document(s)\n")
 
     t0 = time.perf_counter()

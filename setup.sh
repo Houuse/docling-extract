@@ -8,7 +8,7 @@
 #   ./setup.sh --cpu                force CPU
 #   ./setup.sh --gpu                require a GPU, fail if unusable
 #   ./setup.sh --limit 3            convert only 3 documents (a real test)
-#   ./setup.sh --embed --batch 128  bigger embedding batches if VRAM allows
+#   ./setup.sh --embed --batch-chars 20000   halve VRAM use if it OOMs
 #
 # Every step that can fail silently is verified before the next one runs.
 
@@ -23,7 +23,8 @@ LIMIT=""
 SETUP_ONLY=0
 FORCED_GPU=0
 EMBED=0
-BATCH=64              # encode batch size; 8 suits a CPU, a GPU wants far more
+BATCH=256             # max texts per batch; only binds on short texts
+BATCHCHARS=40000      # padded chars per batch — the knob that governs VRAM
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -36,6 +37,7 @@ while [ $# -gt 0 ]; do
     --gpu)         DEVICE="cuda"; FORCED_GPU=1; shift ;;
     --embed)       EMBED=1; shift ;;
     --batch)       BATCH="$2"; shift 2 ;;
+    --batch-chars) BATCHCHARS="$2"; shift 2 ;;
     --setup-only)  SETUP_ONLY=1; shift ;;
     -h|--help)     sed -n '2,11p' "$0"; exit 0 ;;
     *)             echo "unknown option: $1" >&2; exit 2 ;;
@@ -190,7 +192,7 @@ fi
 if [ "$SETUP_ONLY" = "1" ]; then
   say "setup complete"
   echo "convert with:  $PY batch.py \"$PDFS\" --out \"$OUT\" --device $DEVICE"
-  echo "embed with:    $PY embed.py --all --out \"$OUT\" --device $DEVICE --batch $BATCH"
+  echo "embed with:    $PY embed.py --all --out \"$OUT\" --device $DEVICE --batch $BATCH --max-batch-chars $BATCHCHARS"
   exit 0
 fi
 
@@ -201,7 +203,7 @@ if [ "$EMBED" = "1" ]; then
 
   say "6/6  embedding $DOCS documents from $OUT"
   # Resumable: a document whose .npy already exists is skipped.
-  "$PY" embed.py --all --out "$OUT" --device "$DEVICE" --batch "$BATCH"
+  "$PY" embed.py --all --out "$OUT" --device "$DEVICE" --batch "$BATCH" --max-batch-chars "$BATCHCHARS"
 
   NPY="$(find "$OUT" -maxdepth 1 -name '*.emb.*.npy' | wc -l | tr -d ' ')"
   say "done: $NPY .npy files in $OUT"
