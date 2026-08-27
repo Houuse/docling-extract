@@ -7,41 +7,73 @@ on whatever machine has the hardware and the results shared afterwards.
 
 Nothing here needs a database or an embedding model.
 
-**Running the whole thing on a GPU box and sharing the result?**
-See [RUNBOOK.md](RUNBOOK.md) — copy-paste steps end to end.
+## Quick start
 
-## Install
-
-```bash
-uv venv --python 3.12
-uv pip install -r requirements.txt
-```
-
-For an NVIDIA GPU, install a CUDA build of torch first, or `--device cuda`
-will fail on the CPU-only wheel:
+One script does everything — installs, verifies the GPU is genuinely in use,
+and converts. Works in Git Bash on Windows and on Linux/macOS.
 
 ```bash
-uv pip install torch --index-url https://download.pytorch.org/whl/cu124
-uv pip install -r requirements.txt
+./setup.sh --pdfs ../financebench/pdfs
 ```
+
+Useful variants:
+
+```bash
+./setup.sh --setup-only              # install and verify, convert nothing
+./setup.sh --limit 3                 # convert 3 documents as a test
+./setup.sh --cpu                     # no GPU
+./setup.sh --python 3.11             # if 3.12 has no CUDA torch wheel
+```
+
+It pins the virtualenv to **Python 3.12** regardless of the system Python,
+because torch's CUDA wheels lag new Python releases — on 3.14 there is no CUDA
+build and you silently get a CPU-only one. It also refuses to continue if
+`torch.cuda.is_available()` is false, rather than letting you discover it hours
+into a run.
 
 First run downloads model weights (about 1 GB) to `~/.cache`.
 
-## Use
+## Use the tools directly
+
+The interpreter path differs by platform. Set it once:
 
 ```bash
-# one document
-.venv/bin/python extract.py report.pdf --out ./out
-
-# a directory
-.venv/bin/python batch.py ./pdfs --out ./out
-
-# on a GPU
-.venv/bin/python batch.py ./pdfs --out ./out --device cuda
-
-# see the plan without doing anything
-.venv/bin/python batch.py ./pdfs --dry-run
+PY=.venv/bin/python          # Linux, macOS, WSL2
+PY=.venv/Scripts/python      # Windows (Git Bash)
 ```
+
+```bash
+$PY extract.py report.pdf --out ./out          # one document
+$PY batch.py ./pdfs --out ./out                # a directory
+$PY batch.py ./pdfs --out ./out --device cuda  # on a GPU
+$PY batch.py ./pdfs --dry-run                  # show the plan, do nothing
+```
+
+Both are resumable: rerun the same command after an interruption and finished
+work is skipped.
+
+## Share the output
+
+`parts/` holds per-batch resume files, redundant once the merged JSON exists and
+about as large again. Exclude it. JSON compresses roughly 20:1.
+
+```bash
+tar --exclude=parts -czf corpus.tar.gz out/
+```
+
+GitHub Releases accept up to 2 GB per file and do not consume LFS quota, so a
+release is a simpler home for this than git or LFS:
+
+```bash
+gh release create corpus-v1 corpus.tar.gz --notes "docling 2.122.0, accurate mode"
+gh release download corpus-v1              # on the receiving machine
+tar -xzf corpus.tar.gz
+```
+
+**Do not mix output from different docling versions into one corpus.** Half the
+documents extracted by one model version and half by another puts an invisible
+confound into everything downstream. Each `*.meta.json` records the version it
+was produced with.
 
 ## Output
 
