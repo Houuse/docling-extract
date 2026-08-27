@@ -53,24 +53,33 @@ ls ../financebench/pdfs/*.pdf | wc -l
 
 ## 3. Install
 
-Install CUDA torch **first**. If you install docling first, pip resolves the
-CPU-only wheel and the GPU sits idle.
+Install docling first, then force CUDA torch **last**. Order matters and the
+obvious order is wrong: installing CUDA torch first does not survive, because
+resolving docling's own `torch` dependency from PyPI replaces it with the
+CPU-only wheel. The symptom is `Torch not compiled with CUDA enabled` at
+runtime.
+
+First check which CUDA version your driver supports — it is in the `nvidia-smi`
+header. Use the matching index below (`cu124`, `cu121` or `cu118`).
 
 ```bash
 pip install uv
 uv venv --python 3.12
-uv pip install torch --index-url https://download.pytorch.org/whl/cu124
 uv pip install -r requirements.txt
+uv pip install --force-reinstall --index-url https://download.pytorch.org/whl/cu124 torch torchvision
 ```
 
-Check torch can actually see the GPU:
+Then verify — this is the gate, do not skip it:
 
 ```bash
-.venv/bin/python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+.venv/bin/python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
 ```
 
-Must print `True` and your GPU's name. If it prints `False`, the CUDA wheel did
-not take — redo this step before going further.
+Must print a version ending `+cu124` (or your chosen variant) and `True`. A
+version ending `+cpu`, or `False`, means the CPU wheel is still installed —
+repeat the `--force-reinstall` line before going further. Anything installed
+after this that pulls in `torch` can clobber it again, so re-run this check if
+you install anything else.
 
 ## 4. Convert one document as a test
 

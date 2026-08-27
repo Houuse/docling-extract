@@ -2,6 +2,15 @@
 docling==2.122.0
 docling-core==2.92.0
 
-# For an NVIDIA GPU, install a CUDA build of torch BEFORE these, e.g.
-#   uv pip install torch --index-url https://download.pytorch.org/whl/cu124
-# Otherwise pip resolves the CPU-only wheel and --device cuda will fail.
+# torch is pulled in by docling. For an NVIDIA GPU, install the CUDA build
+# AFTER this file, not before — resolving docling's torch dependency replaces a
+# CUDA wheel with the CPU-only one, and the failure only shows up at runtime as
+# "Torch not compiled with CUDA enabled".
+#
+#   uv pip install -r requirements.txt
+#   uv pip install --force-reinstall \
+#       --index-url https://download.pytorch.org/whl/cu124 torch torchvision
+#
+# Match the index to your driver's CUDA version from nvidia-smi: cu124, cu121
+# or cu118. Then check: python -c "import torch; print(torch.__version__)"
+# must end in +cu###, not +cpu.
