@@ -1,10 +1,9 @@
 # Conversion output. Large: a 160-page 10-K produces a 10-30 MB JSON, and the
 # per-batch resume files are roughly the same again. Share these as an archive,
 # not through git.
+# All conversion output lands here. Do not add bare *.json / *.md rules —
+# they silently swallow the repo's own documentation.
 out/
-*.json
-*.md
-!README.md
 
 # Inputs
 pdfs/
