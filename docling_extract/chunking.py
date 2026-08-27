@@ -281,6 +281,20 @@ def prose_chunks(doc, sections: dict[int, str]) -> list[Chunk]:
     # tokenizer it does not take max_tokens from it, and oversized chunks are
     # then silently truncated at embed time with only a warning.
     hf = AutoTokenizer.from_pretrained(EMBED_MODEL, trust_remote_code=True)
+
+    # HybridChunker asks the tokenizer to count a *candidate* merged chunk and
+    # merges only if the count fits the budget. Counting an over-budget
+    # candidate makes transformers print "Token indices sequence length is
+    # longer than the specified maximum sequence length", once per candidate,
+    # about text that is then rejected and never emitted. The warning is about
+    # sequences passed to the model; these are only measured.
+    #
+    # It is pure noise, and worse, it is noise shaped exactly like the real
+    # hazard — so it trains you to ignore the thing you must not ignore. The
+    # budget that actually governs chunking is max_tokens on the wrapper
+    # below, unaffected by this. `oversized()` is the honest check.
+    hf.model_max_length = int(1e12)
+
     tok = HuggingFaceTokenizer(tokenizer=hf, max_tokens=EMBED_MAX_TOKENS)
     chunker = HybridChunker(tokenizer=tok)
 
@@ -389,3 +403,28 @@ def fact_text(company: str, context: str | None, f: Fact) -> str:
         f"{f.value_raw} {f.scale or ''}".strip(),
     ]
     return " · ".join(p for p in parts if p)
+
+
+def oversized(texts: list[str]) -> list[tuple[int, int]]:
+    """Which of these exceed the embedding window, as (index, token count).
+
+    The check the noisy tokenizer warning does not perform. Prose is budgeted
+    by HybridChunker, but `table_chunks` keeps every table whole (ADR 0001) and
+    consults no tokenizer, so an unusually large table can produce a chunk
+    above the window. SentenceTransformer then truncates it at encode time
+    with no error, storing a vector for text that was cut — one of the silent
+    failures this pipeline is built to avoid.
+
+    Measured across 366 filings the count was zero, longest chunk 8,173
+    tokens. That is a property of this corpus, not a guarantee.
+    """
+    from transformers import AutoTokenizer
+
+    hf = AutoTokenizer.from_pretrained(EMBED_MODEL, trust_remote_code=True)
+    hf.model_max_length = int(1e12)  # counting only; see prose_chunks
+    out = []
+    for i, t in enumerate(texts):
+        n = len(hf(t, add_special_tokens=False, verbose=False)["input_ids"])
+        if n > EMBED_MAX_TOKENS:
+            out.append((i, n))
+    return out

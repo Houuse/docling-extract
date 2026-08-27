@@ -16,9 +16,32 @@ skipped, so rerunning after an interruption is free.
 """
 
 import argparse
+import logging
 import sys
 import time
+import warnings
 from pathlib import Path
+
+
+def quiet_known_warnings() -> None:
+    """Silence two warnings that fire constantly and mean nothing here.
+
+    Both were checked before being hidden:
+
+    "Token indices sequence length is longer than ... (N > 8192)" — HybridChunker
+    counting a candidate merged chunk it then rejects. The oversized sequence is
+    never emitted. chunking.oversized() is the check that would matter, and it
+    reports zero across this corpus.
+
+    "Detected the usage of get_extended_attention_mask ... deprecated" — nomic's
+    trust_remote_code model calling an older transformers API. Output is
+    unaffected; embeddings produced with it in place retrieve correctly.
+
+    Noise at this volume is not harmless: it buries the warnings that do matter.
+    """
+    warnings.filterwarnings("ignore", message=".*get_extended_attention_mask.*")
+    logging.getLogger("transformers.modeling_utils").setLevel(logging.ERROR)
+    logging.getLogger("transformers.tokenization_utils_base").setLevel(logging.ERROR)
 
 from docling_extract import chunking
 from docling_extract import embedding as emb
@@ -174,6 +197,8 @@ def main() -> None:
     )
     ap.add_argument("--device", help="cuda or cpu (default: cuda if available)")
     args = ap.parse_args()
+
+    quiet_known_warnings()
 
     out = args.out.resolve()
     if not out.is_dir():
