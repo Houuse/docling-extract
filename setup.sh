@@ -4,7 +4,8 @@
 #   ./setup.sh                      set up, verify, convert everything
 #   ./setup.sh --setup-only         set up and verify, convert nothing
 #   ./setup.sh --pdfs ../fb/pdfs    where the PDFs are
-#   ./setup.sh --cpu                skip CUDA entirely
+#   ./setup.sh --cpu                force CPU
+#   ./setup.sh --gpu                require a GPU, fail if unusable
 #   ./setup.sh --limit 3            convert only 3 documents (a real test)
 #
 # Every step that can fail silently is verified before the next one runs.
@@ -14,10 +15,11 @@ set -euo pipefail
 PDFS="../financebench/pdfs"
 OUT="./out"
 PYVER="3.12"          # torch CUDA wheels lag new Python releases; 3.14 has none
-DEVICE="cuda"
+DEVICE="auto"         # auto | cuda | cpu
 WORKERS=1
 LIMIT=""
 SETUP_ONLY=0
+FORCED_GPU=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -27,8 +29,9 @@ while [ $# -gt 0 ]; do
     --workers)     WORKERS="$2"; shift 2 ;;
     --limit)       LIMIT="$2"; shift 2 ;;
     --cpu)         DEVICE="cpu"; shift ;;
+    --gpu)         DEVICE="cuda"; FORCED_GPU=1; shift ;;
     --setup-only)  SETUP_ONLY=1; shift ;;
-    -h|--help)     sed -n '2,10p' "$0"; exit 0 ;;
+    -h|--help)     sed -n '2,11p' "$0"; exit 0 ;;
     *)             echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -51,14 +54,32 @@ uv --version
 # uv downloads the requested interpreter if the system does not have it, which
 # is the point: the system Python may be too new for torch's CUDA wheels.
 say "2/6  virtualenv on Python $PYVER"
-uv venv --python "$PYVER" --quiet
 
 # Windows puts the interpreter in Scripts/, everything else in bin/.
-if   [ -x .venv/Scripts/python.exe ]; then PY=.venv/Scripts/python.exe
-elif [ -x .venv/Scripts/python ];     then PY=.venv/Scripts/python
-elif [ -x .venv/bin/python ];         then PY=.venv/bin/python
-else die "no interpreter in .venv — check the uv output above"
+find_py() {
+  if   [ -x .venv/Scripts/python.exe ]; then echo .venv/Scripts/python.exe
+  elif [ -x .venv/Scripts/python ];     then echo .venv/Scripts/python
+  elif [ -x .venv/bin/python ];         then echo .venv/bin/python
+  fi
+}
+
+# Idempotent: this script is meant to be rerun after any interruption, and
+# `uv venv` refuses to touch an existing directory. Reuse a venv that is
+# already on the right Python; replace one that is not.
+PY="$(find_py)"
+if [ -n "$PY" ] && [ "$("$PY" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null)" = "$PYVER" ]; then
+  echo "reusing existing .venv"
+else
+  if [ -d .venv ]; then
+    echo "existing .venv is not on Python $PYVER — replacing it"
+    uv venv --python "$PYVER" --clear --quiet
+  else
+    uv venv --python "$PYVER" --quiet
+  fi
+  PY="$(find_py)"
 fi
+
+[ -n "$PY" ] || die "no interpreter in .venv — check the uv output above"
 echo "interpreter: $PY"
 "$PY" --version
 
@@ -74,6 +95,23 @@ uv pip install --python "$PY" --quiet -r requirements.txt
 # Must come AFTER docling: resolving docling's own torch dependency replaces a
 # CUDA wheel with the CPU-only one, and the failure only appears at runtime as
 # "Torch not compiled with CUDA enabled".
+# In auto mode, decide from what is actually present rather than asking the
+# user to know. --gpu forces CUDA and fails loudly if it is unusable; --cpu
+# skips all of this.
+if [ "$DEVICE" = "auto" ]; then
+  say "4/6  detecting GPU"
+  if ! command -v nvidia-smi >/dev/null 2>&1; then
+    echo "no nvidia-smi -> using CPU"
+    DEVICE="cpu"
+  elif ! nvidia-smi >/dev/null 2>&1; then
+    echo "nvidia-smi present but failing (driver problem?) -> using CPU"
+    DEVICE="cpu"
+  else
+    nvidia-smi --query-gpu=name,driver_version --format=csv,noheader 2>/dev/null || true
+    DEVICE="cuda"
+  fi
+fi
+
 if [ "$DEVICE" = "cuda" ]; then
   say "4/6  CUDA torch"
   command -v nvidia-smi >/dev/null 2>&1 || die "nvidia-smi not found. Install the NVIDIA driver, or rerun with --cpu."
@@ -104,7 +142,7 @@ if [ "$DEVICE" = "cuda" ]; then
   fi
 
   say "5/6  verify GPU"
-  "$PY" - <<'EOF' || exit 1
+  if "$PY" - <<'EOF'
 import sys, torch
 v, ok = torch.__version__, torch.cuda.is_available()
 print("torch:", v)
@@ -112,17 +150,28 @@ print("cuda available:", ok)
 if ok:
     print("device:", torch.cuda.get_device_name(0))
 else:
-    print("\nFAILED: torch cannot see the GPU.", file=sys.stderr)
+    print("torch cannot see the GPU.", file=sys.stderr)
     if v.endswith("+cpu"):
         print("A CPU-only wheel is installed: this Python version has no CUDA"
-              " build. Rerun with --python 3.11.", file=sys.stderr)
+              " build. Try --python 3.11.", file=sys.stderr)
     else:
         print(f"torch {v} is built for a newer CUDA than the driver supports."
-              " Update the NVIDIA driver, or rerun with --cpu.", file=sys.stderr)
-    sys.exit(1)
+              " Updating the NVIDIA driver would fix it.", file=sys.stderr)
+sys.exit(0 if ok else 1)
 EOF
+  then
+    :
+  elif [ "$FORCED_GPU" = "1" ]; then
+    die "GPU was requested with --gpu but is not usable (see above)"
+  else
+    # Auto mode: carry on rather than stopping, but say so unmistakably —
+    # a silent CPU fallback is how you lose a day to a nine-hour run.
+    printf '\n!! GPU unusable — falling back to CPU. This will be many times slower.\n'
+    printf '!! Ctrl-C now if you would rather fix the GPU first.\n\n'
+    DEVICE="cpu"
+  fi
 else
-  say "4/6  torch (CPU, by request)"
+  say "4/6  torch (CPU)"
   "$PY" -c 'import torch; print("torch:", torch.__version__)'
   say "5/6  verify — skipped, running on CPU"
 fi
