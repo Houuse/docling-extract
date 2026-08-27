@@ -1,0 +1,15 @@
+# Conversion output. Large: a 160-page 10-K produces a 10-30 MB JSON, and the
+# per-batch resume files are roughly the same again. Share these as an archive,
+# not through git.
+out/
+*.json
+*.md
+!README.md
+
+# Inputs
+pdfs/
+*.pdf
+
+.venv/
+__pycache__/
+*.pyc
