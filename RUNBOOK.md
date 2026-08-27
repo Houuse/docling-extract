@@ -3,14 +3,33 @@
 Copy-paste, top to bottom. Each step says what to expect so you can tell a
 problem from normal slowness.
 
-On Windows, do all of this inside **WSL2** (Ubuntu). CUDA works there; native
-Windows torch is a harder path.
+## Windows note — read this first
+
+Commands below use `.venv/bin/python`, which is the Linux and macOS layout.
+**On Windows the interpreter is `.venv/Scripts/python`.** Substitute it
+everywhere, or set a variable once in Git Bash and use `$PY`:
+
+```bash
+PY=.venv/Scripts/python      # Windows (Git Bash / PowerShell)
+PY=.venv/bin/python          # Linux, macOS, WSL2
+```
+
+Everything else works the same in Git Bash, forward slashes included. CUDA
+torch has native Windows wheels, so WSL2 is not required — though WSL2 also
+works if you prefer it, with the Linux paths.
+
+The two Windows-specific substitutions further down:
+
+| Step | Linux | Windows |
+|---|---|---|
+| interpreter | `.venv/bin/python` | `.venv/Scripts/python` |
+| compression | `zstd` | `tar -czf` (gzip, built in) |
 
 ## 1. Check the machine
 
 ```bash
 nvidia-smi
-python3 --version
+python --version      # try python3 if that is not found
 ```
 
 Expect a GPU table with a driver and CUDA version, and Python 3.10 or newer.
@@ -111,19 +130,30 @@ only those.
 `parts/` is per-batch resume files, redundant once the merged JSON exists, and
 about as large again. Exclude it. JSON compresses roughly 20:1.
 
+Linux or macOS, with zstd:
+
 ```bash
-sudo apt install -y zstd        # if missing
 tar --exclude=parts -cf - out/ | zstd -10 -o corpus-368.tar.zst
 ls -lh corpus-368.tar.zst
 ```
 
-Expect somewhere around 150 MB.
+Windows — `tar` is built in and does gzip, so no install needed:
+
+```bash
+tar --exclude=parts -czf corpus-368.tar.gz out/
+ls -lh corpus-368.tar.gz
+```
+
+Expect around 150 MB with zstd, around 200 MB with gzip. The difference is not
+worth installing anything for.
 
 ## 8. Publish it
 
 FinanceBench is permissively licensed and the underlying SEC filings are public
 records, so publishing the extractions is fine. Keep the attribution in the
 release notes.
+
+Use whichever archive you produced in step 7 — `.tar.zst` or `.tar.gz`.
 
 ```bash
 gh auth login
@@ -141,7 +171,12 @@ LFS setup is needed.
 
 ```bash
 gh release download corpus-v1 --repo Houuse/docling-extract
+
+# zstd archive
 zstd -d corpus-368.tar.zst -c | tar -xf -
+
+# gzip archive (Windows-produced)
+tar -xzf corpus-368.tar.gz
 ```
 
 Read a document back:
