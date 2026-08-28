@@ -23,6 +23,10 @@ import warnings
 from pathlib import Path
 
 
+from docling_extract import chunking
+from docling_extract import embedding as emb
+
+
 def quiet_known_warnings() -> None:
     """Silence two warnings that fire constantly and mean nothing here.
 
@@ -42,9 +46,6 @@ def quiet_known_warnings() -> None:
     warnings.filterwarnings("ignore", message=".*get_extended_attention_mask.*")
     logging.getLogger("transformers.modeling_utils").setLevel(logging.ERROR)
     logging.getLogger("transformers.tokenization_utils_base").setLevel(logging.ERROR)
-
-from docling_extract import chunking
-from docling_extract import embedding as emb
 
 
 def build_texts(out: Path, stem: str):
