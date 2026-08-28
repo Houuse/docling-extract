@@ -1,8 +1,0 @@
-# Pinned to the versions this was built and tested against.
-docling==2.122.0
-docling-core==2.92.0
-
-# torch comes in as a docling dependency. Do not hand-manage it here — setup.sh
-# checks whether the installed wheel can actually see the GPU and only
-# reinstalls from a CUDA index when it cannot. The recent default PyPI wheel is
-# already CUDA-enabled, so forcing an index can downgrade a working install.
